@@ -2999,6 +2999,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getUploadChunkTimeout = exports.getConcurrency = exports.getGitHubWorkspaceDir = exports.isGhes = exports.getResultsServiceUrl = exports.getRuntimeToken = exports.getUploadChunkSize = void 0;
 const os_1 = __importDefault(__nccwpck_require__(22037));
+const core_1 = __nccwpck_require__(15457);
 // Used for controlling the highWaterMark value of the zip that is being streamed
 // The same value is used as the chunk size that is use during upload to blob storage
 function getUploadChunkSize() {
@@ -3041,17 +3042,38 @@ exports.getGitHubWorkspaceDir = getGitHubWorkspaceDir;
 // Mimics behavior of azcopy: https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azcopy-optimize
 // If your machine has fewer than 5 CPUs, then the value of this variable is set to 32.
 // Otherwise, the default value is equal to 16 multiplied by the number of CPUs. The maximum value of this variable is 300.
+// This value can be lowered with ACTIONS_ARTIFACT_UPLOAD_CONCURRENCY variable.
 function getConcurrency() {
     const numCPUs = os_1.default.cpus().length;
-    if (numCPUs <= 4) {
-        return 32;
+    let concurrencyCap = 32;
+    if (numCPUs > 4) {
+        const concurrency = 16 * numCPUs;
+        concurrencyCap = concurrency > 300 ? 300 : concurrency;
     }
-    const concurrency = 16 * numCPUs;
-    return concurrency > 300 ? 300 : concurrency;
+    const concurrencyOverride = process.env['ACTIONS_ARTIFACT_UPLOAD_CONCURRENCY'];
+    if (concurrencyOverride) {
+        const concurrency = parseInt(concurrencyOverride);
+        if (isNaN(concurrency) || concurrency < 1) {
+            throw new Error('Invalid value set for ACTIONS_ARTIFACT_UPLOAD_CONCURRENCY env variable');
+        }
+        if (concurrency < concurrencyCap) {
+            return concurrency;
+        }
+        (0, core_1.info)(`ACTIONS_ARTIFACT_UPLOAD_CONCURRENCY is higher than the cap of ${concurrencyCap} based on the number of cpus. Lowering it to the cap.`);
+    }
+    return concurrencyCap;
 }
 exports.getConcurrency = getConcurrency;
 function getUploadChunkTimeout() {
-    return 300000; // 5 minutes
+    const timeoutVar = process.env['ACTIONS_ARTIFACT_UPLOAD_TIMEOUT_MS'];
+    if (!timeoutVar) {
+        return 300000; // 5 minutes
+    }
+    const timeout = parseInt(timeoutVar);
+    if (isNaN(timeout)) {
+        throw new Error('Invalid value set for ACTIONS_ARTIFACT_UPLOAD_TIMEOUT_MS env variable');
+    }
+    return timeout;
 }
 exports.getUploadChunkTimeout = getUploadChunkTimeout;
 //# sourceMappingURL=config.js.map
@@ -3606,6 +3628,7 @@ function uploadArtifact(name, files, rootDirectory, options) {
         core.info(`Artifact ${name}.zip successfully finalized. Artifact ID ${artifactId}`);
         return {
             size: uploadResult.uploadSize,
+            digest: uploadResult.sha256Hash,
             id: Number(artifactId)
         };
     });
@@ -97266,6 +97289,14 @@ const { isUint8Array, isArrayBuffer } = __nccwpck_require__(29830)
 const { File: UndiciFile } = __nccwpck_require__(78511)
 const { parseMIMEType, serializeAMimeType } = __nccwpck_require__(685)
 
+let random
+try {
+  const crypto = __nccwpck_require__(6005)
+  random = (max) => crypto.randomInt(0, max)
+} catch {
+  random = (max) => Math.floor(Math.random(max))
+}
+
 let ReadableStream = globalThis.ReadableStream
 
 /** @type {globalThis['File']} */
@@ -97351,7 +97382,7 @@ function extractBody (object, keepalive = false) {
     // Set source to a copy of the bytes held by object.
     source = new Uint8Array(object.buffer.slice(object.byteOffset, object.byteOffset + object.byteLength))
   } else if (util.isFormDataLike(object)) {
-    const boundary = `----formdata-undici-0${`${Math.floor(Math.random() * 1e11)}`.padStart(11, '0')}`
+    const boundary = `----formdata-undici-0${`${random(1e11)}`.padStart(11, '0')}`
     const prefix = `--${boundary}\r\nContent-Disposition: form-data`
 
     /*! formdata-polyfill. MIT License. Jimmy Wärting <https://jimmy.warting.se/opensource> */
@@ -115922,7 +115953,7 @@ ENDOR_GCP_CREDENTIALS_SERVICE_ACCOUNT: ${GCP_CREDENTIALS_SERVICE_ACCOUNT}`;
             options.push(`--count=true`);
             let endorctl_command = `endorctl`;
             if (RUN_STATS) {
-                // Wrap scan commmand in `time -v` to get stats
+                // Wrap scan command in `time -v` to get stats
                 if (platform.os === constants_1.EndorctlAvailableOS.Windows) {
                     core.info("Timing is not supported on Windows runners");
                 }
@@ -115940,7 +115971,7 @@ ENDOR_GCP_CREDENTIALS_SERVICE_ACCOUNT: ${GCP_CREDENTIALS_SERVICE_ACCOUNT}`;
             }
             // Run the command
             yield exec.exec(endorctl_command, options);
-            core.info(`Endorctl setup sucess`);
+            core.info(`Endorctl setup succeeded`);
         }
         catch (_a) {
             core.setFailed(`Endorctl setup failed`);
@@ -116173,7 +116204,7 @@ const setupEndorctl = ({ version, checksum, api }) => __awaiter(void 0, void 0, 
         yield io.cp(downloadPath, endorctlPath);
         core.addPath(binPath);
         core.info(`Endorctl downloaded and added to the path`);
-        // Check to see if tsserver is installed -- if not install it (needed for javascript callgraphs)
+        // Check to see if tsserver is installed -- if not install it (needed for javascript call graphs)
         const command = "tsserver";
         core.info(`Checking for tsserver`);
         if (!(0, exports.commandExists)(command)) {
@@ -116413,6 +116444,14 @@ module.exports = require("https");
 
 "use strict";
 module.exports = require("net");
+
+/***/ }),
+
+/***/ 6005:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:crypto");
 
 /***/ }),
 
@@ -135479,7 +135518,7 @@ module.exports = index;
 /***/ ((module) => {
 
 "use strict";
-module.exports = JSON.parse('{"name":"@actions/artifact","version":"2.1.11","preview":true,"description":"Actions artifact lib","keywords":["github","actions","artifact"],"homepage":"https://github.com/actions/toolkit/tree/main/packages/artifact","license":"MIT","main":"lib/artifact.js","types":"lib/artifact.d.ts","directories":{"lib":"lib","test":"__tests__"},"files":["lib","!.DS_Store"],"publishConfig":{"access":"public"},"repository":{"type":"git","url":"git+https://github.com/actions/toolkit.git","directory":"packages/artifact"},"scripts":{"audit-moderate":"npm install && npm audit --json --audit-level=moderate > audit.json","test":"cd ../../ && npm run test ./packages/artifact","bootstrap":"cd ../../ && npm run bootstrap","tsc-run":"tsc","tsc":"npm run bootstrap && npm run tsc-run","gen:docs":"typedoc --plugin typedoc-plugin-markdown --out docs/generated src/artifact.ts --githubPages false --readme none"},"bugs":{"url":"https://github.com/actions/toolkit/issues"},"dependencies":{"@actions/core":"^1.10.0","@actions/github":"^5.1.1","@actions/http-client":"^2.1.0","@azure/storage-blob":"^12.15.0","@octokit/core":"^3.5.1","@octokit/plugin-request-log":"^1.0.4","@octokit/plugin-retry":"^3.0.9","@octokit/request-error":"^5.0.0","@protobuf-ts/plugin":"^2.2.3-alpha.1","archiver":"^7.0.1","jwt-decode":"^3.1.2","twirp-ts":"^2.5.0","unzip-stream":"^0.3.1"},"devDependencies":{"@types/archiver":"^5.3.2","@types/unzip-stream":"^0.3.4","typedoc":"^0.25.4","typedoc-plugin-markdown":"^3.17.1","typescript":"^5.2.2"}}');
+module.exports = JSON.parse('{"name":"@actions/artifact","version":"2.2.1","preview":true,"description":"Actions artifact lib","keywords":["github","actions","artifact"],"homepage":"https://github.com/actions/toolkit/tree/main/packages/artifact","license":"MIT","main":"lib/artifact.js","types":"lib/artifact.d.ts","directories":{"lib":"lib","test":"__tests__"},"files":["lib","!.DS_Store"],"publishConfig":{"access":"public"},"repository":{"type":"git","url":"git+https://github.com/actions/toolkit.git","directory":"packages/artifact"},"scripts":{"audit-moderate":"npm install && npm audit --json --audit-level=moderate > audit.json","test":"cd ../../ && npm run test ./packages/artifact","bootstrap":"cd ../../ && npm run bootstrap","tsc-run":"tsc","tsc":"npm run bootstrap && npm run tsc-run","gen:docs":"typedoc --plugin typedoc-plugin-markdown --out docs/generated src/artifact.ts --githubPages false --readme none"},"bugs":{"url":"https://github.com/actions/toolkit/issues"},"dependencies":{"@actions/core":"^1.10.0","@actions/github":"^5.1.1","@actions/http-client":"^2.1.0","@azure/storage-blob":"^12.15.0","@octokit/core":"^3.5.1","@octokit/plugin-request-log":"^1.0.4","@octokit/plugin-retry":"^3.0.9","@octokit/request-error":"^5.0.0","@protobuf-ts/plugin":"^2.2.3-alpha.1","archiver":"^7.0.1","jwt-decode":"^3.1.2","twirp-ts":"^2.5.0","unzip-stream":"^0.3.1"},"devDependencies":{"@types/archiver":"^5.3.2","@types/unzip-stream":"^0.3.4","typedoc":"^0.25.4","typedoc-plugin-markdown":"^3.17.1","typescript":"^5.2.2"}}');
 
 /***/ }),
 
